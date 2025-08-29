@@ -11,7 +11,7 @@
 * **Hyperviseur** : Oracle VirtualBox (hôte Windows).
 * **VM1 `kali1` (Web+WAF)** : Kali Rolling **2025.2** x64 (base Debian).
 * **VM2 `kali2` (SIEM)** : Kali Rolling **2025.2** x64 (même profil).
-* **Ressources** (chacune) : 2 vCPU, 2 GB RAM (4 GB pour la VM2, car Graylog + Wazuh sont gourmands), vidéo 128 MB, accélération VT‑x/AMD‑V, PAE/NX.
+* **Ressources** (chacune) : 2 vCPU, 2 GB RAM (4 GB pour la VM2, car Graylog + Wazuh sont gourmands).
 
 ```bash
 ┌──(kali㉿django-vm)-[~]
@@ -173,7 +173,7 @@ sudo sed -i 's/^SecRuleEngine .*/SecRuleEngine DetectionOnly/' /etc/modsecurity/
 
 ### 1.3 OWASP CRS
 
-Sur Kali/Debian, security2.conf inclut :
+Sur Kali/Debian, /etc/apache2/mods-enabled/security2.conf inclut :
 ```bash
 IncludeOptional /usr/share/modsecurity-crs/*.load
 ```
@@ -189,7 +189,7 @@ sudo mkdir -p /etc/modsecurity/crs
 sudo wget https://raw.githubusercontent.com/coreruleset/coreruleset/v3.3.7/crs-setup.conf.example -O /etc/modsecurity/crs/crs-setup.conf
 ```
 
-> mportant : on ne rajoute pas d’Include manuel dans security2.conf (le paquet gère déjà *.load). On évite ainsi tout double-chargement.
+> Important : on ne rajoute pas d’Include manuel dans security2.conf (le paquet gère déjà *.load). On évite ainsi tout double-chargement.
 ```bash
 sudo apache2ctl -t && sudo systemctl restart apache2
 ```
@@ -277,6 +277,7 @@ docker run -d --name vector \
 
 ```
 
+Le fichier `vector.toml` a été créé dans un dossier dédié `~/vector_config/` afin de centraliser la configuration de Vector.
 
 ### 2.3 vector.toml
 
@@ -392,7 +393,7 @@ host_key = "host"
 
 #### 2.4 Configuration Django – écriture des logs app
 
-Principe. Chaque instance Django définit le « client » via la variable d’environnement TENANT (ex. clientA, clientB). Les logs JSON sont écrits dans /var/log/django/<TENANT>/app.log et expédiés par Vector.
+Principe. Chaque instance Django définit le « client » via la variable d’environnement TENANT (ex. clientA, clientB). Les logs JSON sont écrits dans /var/log/django/TENANT/app.log et expédiés par Vector.
 
 ##### settings.py (extrait)
 ```python
@@ -598,7 +599,7 @@ Démarrer :
 docker-compose up -d
 ```
 
-Accès UI : `http://192.168.56.102:9000` (utilisateur **admin**, mot de passe **admin** d’après le SHA2 fourni — à changer ensuite).
+Accès UI : `http://192.168.56.102:9000` (utilisateur **admin**, mot de passe **admin** d’après le SHA2 fourni, à changer ensuite).
 
 **Post‑install indispensable**
 
