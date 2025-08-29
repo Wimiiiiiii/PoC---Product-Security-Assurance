@@ -11,7 +11,7 @@
 * **Hyperviseur** : Oracle VirtualBox (hôte Windows).
 * **VM1 `kali1` (Web+WAF)** : Kali Rolling **2025.2** x64 (base Debian).
 * **VM2 `kali2` (SIEM)** : Kali Rolling **2025.2** x64 (même profil).
-* **Ressources** (chacune) : 2 vCPU, 2 GB RAM (4GB pour la VM2 vu que nous avons besoin de plus de ressources pour graylog+ Wazuh), vidéo 128 MB, accélération VT‑x/AMD‑V, PAE/NX.
+* **Ressources** (chacune) : 2 vCPU, 2 GB RAM (4 GB pour la VM2, car Graylog + Wazuh sont gourmands), vidéo 128 MB, accélération VT‑x/AMD‑V, PAE/NX.
 
 ```bash
 ┌──(kali㉿django-vm)-[~]
@@ -27,11 +27,14 @@ HOME_URL="https://www.kali.org/"
 SUPPORT_URL="https://forums.kali.org/"
 BUG_REPORT_URL="https://bugs.kali.org/"
 ANSI_COLOR="1;31"
-                                                                                                                                                                                                                                           
+```
+
+```bash
 ┌──(kali㉿django-vm)-[~]
 └─$ uname -a
-Linux django-vm 6.12.25-amd64 '#'1 SMP PREEMPT_DYNAMIC Kali 6.12.25-1kali1 (2025-04-30) x86_64 GNU/Linux
+Linux django-vm 6.12.25-amd64 #1 SMP PREEMPT_DYNAMIC Kali 6.12.25-1kali1 (2025-04-30) x86_64 GNU/Linux
 ```
+
 ### 0.2 Réseau (NAT + Host-Only)
 
 * **Adaptateur 1**: NAT (accès Internet / mises à jour).
@@ -76,20 +79,18 @@ sudo nmcli con up hostonly
 
 **Host Windows** (`C:\Windows\System32\drivers\etc\hosts`) :
 
-```bash
+```text
 192.168.56.101  clienta.local
 192.168.56.101  clientb.local
 192.168.56.101  django.local
-#voir plus tard
 ```
 
 **Linux** (si nécessaire) `/etc/hosts` :
 
-```bash
+```text
 192.168.56.101  clienta.local
 192.168.56.101  clientb.local
 192.168.56.101  django.local
-#voir plus tard
 ```
 
 Tests :
@@ -100,17 +101,6 @@ ping 192.168.56.101
 curl -H "Host: clienta.local" http://192.168.56.101/
 ```
 
-### 0.5 Horloge & NTP (recommandé)
-
-```bash
-sudo timedatectl set-timezone UTC
-sudo timedatectl set-ntp true
-timedatectl
-```
-
-* La plupart des SIEM (dont Graylog) stockent/affichent en UTC : garder les VMs en UTC réduit les décalages.
-
-* Tenir compte du fuseau horaire de la machine hôte (locale) lors des corrélations temporelles.
 
 
 ## 1) VM1 – Apache + ModSecurity (OWASP CRS) 
@@ -127,7 +117,7 @@ Activation des modules de proxy :
 sudo a2enmod proxy proxy_http
 ```
 
-Préparer les répertoires d’audit ModSecurity (concurrent) :
+Préparer les répertoires d’audit ModSecurity (mode **concurrent**) :
 ```bash
 sudo mkdir -p /var/log/modsecurity/clienta /var/log/modsecurity/clientb
 sudo chmod 750 /var/log/modsecurity /var/log/modsecurity/clienta /var/log/modsecurity/clientb
@@ -139,8 +129,7 @@ sudo nano /etc/apache2/sites-available/clienta.conf
 sudo nano /etc/apache2/sites-available/clientb.conf
 ```
 
-Pour la configuration du vhost, ci dessous est l'exemple du clienta mais c'est la même chose pour le clientb en changeant juste clienta par clientb et le port 8000 par 8001
-
+> Exemple pour **clienta** (adapter `clientb` en remplaçant le nom et le port 8000 → 8001) :
 ```bash
 
 <VirtualHost *:80>
@@ -164,7 +153,7 @@ Pour la configuration du vhost, ci dessous est l'exemple du clienta mais c'est l
 </VirtualHost>
 ```
 
-Désactivation du site par défaut et activation des nouveaux :
+Désactiver le site par défaut et activer les nouveaux :
 ```bash
 sudo a2dissite 000-default.conf
 sudo a2ensite clienta.conf clientb.conf
@@ -206,7 +195,7 @@ sudo apache2ctl -t && sudo systemctl restart apache2
 ```
 ### 1.4 Tuning CRS (exemples) – `crs-setup.conf`
 
-Exemple : baisser la sévérité de la règle **920350** (Host header = IP numérique) pour éviter du bruit pendant les tests.
+Exemple : baisser la sévérité de la règle **920350** (Host header = IP numérique).
 
 ```apache
 # --- Overrides locaux CRS ---
@@ -222,13 +211,13 @@ Créer `/etc/modsecurity/crs/custom-rules.conf` :
 SecRuleUpdateActionById 920350 "severity:NOTICE"
 ```
 
-Il faut l'inclure dans le fichier /usr/share/modsecurity-crs/owasp-crs.load
+Il faut donc ajouter la ligne suivante dans le fichier /usr/share/modsecurity-crs/owasp-crs.load
 
 ```apache
 Include /etc/modsecurity/crs/custom-rules.conf
 ```
 
-Redémarrer Apache après toute modif :
+Redémarrer Apache après toute modification :
 
 ```bash
 sudo systemctl restart apache2
@@ -240,7 +229,7 @@ sudo systemctl restart apache2
 
 ## 2) VM1 → VM2 : expédition des logs avec Vector
 
-> Objectif : envoyer les logs Apache(inclut les erreurs modsecurity) + logs applicatifs Django vers Graylog . Vector tourne en conteneur ou service.
+> Objectif : envoyer les **logs Apache** (y compris les erreurs ModSecurity présentes dans `error.log`) + **logs applicatifs Django** vers **Graylog**. Vector tourne en conteneur.
 
 ### 2.1 Arborescence & fichiers créés
 
@@ -269,7 +258,7 @@ sudo chmod -R 750 /var/log/django
 
 ```
 
-> Choix d’expédition : pour la SIEM, on n’envoie pas l’audit ModSecurity (très volumineux, multi-lignes). On privilégie les Apache error (ils contiennent déjà les déclenchements ModSecurity : [id "xxxxxx"], severity, ver "OWASP_CRS/…"), + les logs applicatifs (Django).
+> Choix d’expédition : pour la SIEM, on **n’envoie pas** l’audit ModSecurity (très volumineux, multi‑lignes). On privilégie les **Apache error** (qui contiennent déjà les déclenchements `[id "xxxxxx"]`, `severity`, etc.) + les logs applicatifs (Django).
 
 ### 2.2 Lancer Vector (Docker)
 
@@ -497,8 +486,7 @@ class AccessLogMiddleware(MiddlewareMixin):
 
 ```
 
-> Le middleware écrit une seule ligne JSON par requête de login : event, method, path, status_code, duration_ms, client_ip, outcome (optionnel). Ici on on a pris le login juste pour exemple afin d'illustrer une tentative de brute force ou autre. Bien sur d'autre middleware peuvent etre mis en place mais le but de ce PoC c'est de montrer que ça peut marcher pour un flow et donc ça fonctionnera pour le reste 
-
+> Le middleware écrit une ligne par requête de login : `event`, `method`, `path`, `status_code`, `duration_ms`, `client_ip`, `outcome` (optionnel). Ici, le login illustre la détection de brute force ; d’autres middlewares peuvent être ajoutés selon les besoins.
 
 
 ##### Lancer 2 instances (clientA/clientB)
@@ -656,8 +644,8 @@ end
 ```
 
 **Add new pipeline -> Apache error enrichment** :
-* Stage 0 : ajouter la règle modsec_sev_critical
-* Connecter le pipeline au stream Apache errors
+* Stage 0 : ajouter la règle `modsec_sev_critical`
+* Connecter le pipeline au stream **Apache errors**
 
 ### 3.4 Alert & Event Definition « Apache Critical Burst »
 
@@ -670,7 +658,7 @@ end
 - **Search within** : `2 minutes`  
 - **Execute every** : `2 minutes`  
 - **Group by** : *(none)*  
-- **Create Events if** : `count() >= 4`  (4 juste pour le test)
+- **Create Events if** : `count() >= 4`  (pour le test)
 - **Notifications** : sélectionner la notification HTTP (voir §3.5)
 
 
@@ -739,7 +727,8 @@ if __name__ == "__main__":
 
 ## 4) Wazuh Stack (VM2)
 
-La configuration avec Wazuh a été faite tout au début avec un seul vhost pour le test mais ça a été jugé intrusif vu qu'il analyse par défaut plus que ce qu'on lui demande et c'est normal vu que c'est un outil plus fait pour ça donc si on limite son intervention aux logs spécifiques qu'on veut sans etre intrusif l'efficacité ne sera pas à la même et en ce moment là c'est mieux d'utiliser un outil comme Graylog.
+La configuration avec Wazuh a été testée au début (avec un **vhost unique**) pour évaluer l’intégration. Elle s’est révélée plus **intrusive** (analyses système par défaut). Si l’on limite l’agent aux seuls fichiers de logs souhaités, l’efficacité revient même moins à celle d’une pile orientée **observabilité** comme Graylog ; nous avons donc privilégié Graylog pour ce PoC.
+
 
 #### 4.1 Vhost unique
 
@@ -761,18 +750,18 @@ La configuration avec Wazuh a été faite tout au début avec un seul vhost pour
 
 #### Emplacement des logs
 
-- Apache access : `/var/log/apache2/django_access.log`
-- Apache error : `/var/log/apache2/django_error.log`
-- Django app : `/home/kali/Desktop/Website/logs/app.log`
-- ModSecurity : `/var/log/apache2/modsec_audit.log`
+* Apache access : `/var/log/apache2/django_access.log`
+* Apache error : `/var/log/apache2/django_error.log`
+* Django app   : `/home/kali/Desktop/Website/logs/app.log` (chemin initial, ensuite remplacé par `/var/log/django/...`)
+* ModSecurity  : `/var/log/apache2/modsec_audit.log` (mode non‑concurrent à l’époque)
+
 
 #### Lancement de la nouvelle config
 ```bash
-sudo a2dissite  #un autre site qui peut entrer en conflit
+sudo a2dissite 000-default.conf  # désactiver un site qui entre en conflit ( clienta, clientb..)
 sudo a2ensite django.conf
 sudo apachectl -t && sudo systemctl reload apache2
 ```
-
 
 ### 4.2 Installation automatisée (All-in-One)
 
@@ -794,10 +783,9 @@ https://192.168.56.102
 ```
 
 Identifiants fournis par l’installateur :
-```bash
-Username: admin
-Password: (généré et affiché en fin d’installation)
-```
+* **Username** : `admin`
+* **Password** : *(généré et affiché en fin d’installation)*
+
 ## 5) Wazuh Agent (VM1) – Collecte ciblée
 ### 5.1 Installation
 ```bash
